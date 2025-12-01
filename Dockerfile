@@ -1,7 +1,6 @@
 cat > Dockerfile << 'EOF'
 FROM node:18-slim
 
-# Installation des dépendances Playwright
 RUN apt-get update && apt-get install -y \
     wget \
     ca-certificates \
@@ -26,21 +25,15 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Copie des fichiers de dépendances
 COPY package*.json ./
 
-# Installation des dépendances
 RUN npm install
 
-# Installation des navigateurs Playwright
 RUN npx playwright install chromium
 
-# Copie du code source
 COPY . .
 
-# Exposition du port
 EXPOSE 3000
 
-# Commande de démarrage
 CMD ["npm", "start"]
 EOF
