@@ -1,4 +1,3 @@
-cat > Dockerfile << 'EOF'
 FROM node:18-slim
 
 RUN apt-get update && apt-get install -y \
@@ -36,4 +35,3 @@ COPY . .
 EXPOSE 3000
 
 CMD ["npm", "start"]
-EOF
