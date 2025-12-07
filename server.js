@@ -11,8 +11,10 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
+// Stockage temporaire (remplacer par une vraie DB en production)
 let booksData = [];
 
+// Fonction de scraping Kindle
 async function scrapeKindleData(email, password) {
   const browser = await chromium.launch({
     headless: true,
@@ -25,8 +27,10 @@ async function scrapeKindleData(email, password) {
     });
     const page = await context.newPage();
 
+    // 1. Connexion à Amazon
     await page.goto('https://read.amazon.com/notebook', { waitUntil: 'networkidle' });
     
+    // Attendre le formulaire de connexion
     await page.waitForSelector('input[type="email"]', { timeout: 10000 });
     await page.fill('input[type="email"]', email);
     await page.click('#continue');
@@ -35,11 +39,17 @@ async function scrapeKindleData(email, password) {
     await page.fill('input[type="password"]', password);
     await page.click('#signInSubmit');
 
+    // Attendre la redirection après connexion
     await page.waitForLoadState('networkidle');
     
+    // 2. Scraper les livres depuis la bibliothèque
     await page.goto('https://read.amazon.com/notebook', { waitUntil: 'networkidle' });
+    
+    // Attendre que les livres soient chargés (jusqu'à 30 secondes)
+    await page.waitForSelector('.kp-notebook-library-each-book', { timeout: 30000 });
     await page.waitForTimeout(3000);
 
+    // Extraire les données des livres
     const books = await page.evaluate(() => {
       const bookElements = document.querySelectorAll('.kp-notebook-library-each-book');
       const results = [];
@@ -63,12 +73,15 @@ async function scrapeKindleData(email, password) {
       return results;
     });
 
+    // 3. Pour chaque livre, récupérer les highlights et progression
     for (let book of books) {
       try {
+        // Cliquer sur le livre pour voir les détails
         const bookSelector = `#${book.id}`;
         await page.click(bookSelector);
         await page.waitForTimeout(2000);
 
+        // Extraire highlights et notes
         const highlights = await page.evaluate(() => {
           const highlightEls = document.querySelectorAll('.kp-notebook-highlight');
           return Array.from(highlightEls).map(el => ({
@@ -81,6 +94,7 @@ async function scrapeKindleData(email, password) {
         book.highlights = highlights;
         book.highlightCount = highlights.length;
         
+        // Retour à la liste
         await page.goBack();
         await page.waitForTimeout(1000);
       } catch (err) {
@@ -100,10 +114,14 @@ async function scrapeKindleData(email, password) {
   }
 }
 
+// Routes API
+
+// Health check
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// Synchroniser les données Kindle
 app.post('/api/sync', async (req, res) => {
   const { email, password } = req.body;
 
@@ -131,6 +149,7 @@ app.post('/api/sync', async (req, res) => {
   }
 });
 
+// Récupérer tous les livres
 app.get('/api/books', (req, res) => {
   res.json({
     books: booksData,
@@ -139,6 +158,7 @@ app.get('/api/books', (req, res) => {
   });
 });
 
+// Récupérer un livre spécifique
 app.get('/api/books/:id', (req, res) => {
   const book = booksData.find(b => b.id === req.params.id);
   
@@ -149,6 +169,7 @@ app.get('/api/books/:id', (req, res) => {
   res.json(book);
 });
 
+// Statistiques de lecture
 app.get('/api/stats', (req, res) => {
   const totalBooks = booksData.length;
   const totalHighlights = booksData.reduce((acc, book) => acc + (book.highlightCount || 0), 0);
