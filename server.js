@@ -28,50 +28,63 @@ async function scrapeKindleData(email, password) {
     const page = await context.newPage();
 
     // 1. Connexion à Amazon
-    await page.goto('https://read.amazon.com/notebook', { waitUntil: 'networkidle' });
+    await page.goto('https://www.amazon.com/ap/signin?openid.return_to=https://read.amazon.com/notebook', { waitUntil: 'networkidle' });
     
     // Attendre le formulaire de connexion
     await page.waitForSelector('input[type="email"]', { timeout: 10000 });
     await page.fill('input[type="email"]', email);
     await page.click('#continue');
     
-    await page.waitForSelector('input[type="password"]', { timeout: 5000 });
+    await page.waitForTimeout(2000);
+    await page.waitForSelector('input[type="password"]', { timeout: 10000 });
     await page.fill('input[type="password"]', password);
     await page.click('#signInSubmit');
 
-    // Attendre la redirection après connexion
+    // Attendre la redirection vers notebook
+    await page.waitForURL('**/notebook**', { timeout: 30000 });
     await page.waitForLoadState('networkidle');
     
-    // 2. Scraper les livres depuis la bibliothèque
-    await page.goto('https://read.amazon.com/notebook', { waitUntil: 'networkidle' });
+    // Attendre que les livres soient chargés
+    try {
+      await page.waitForSelector('.kp-notebook-library-each-book', { timeout: 15000 });
+    } catch (e) {
+      // Si pas de livres avec ce sélecteur, prendre une capture pour debug
+      console.log('Aucun livre trouvé avec le sélecteur standard');
+    }
     
-    // Attendre que les livres soient chargés (jusqu'à 30 secondes)
-    await page.waitForSelector('.kp-notebook-library-each-book', { timeout: 30000 });
     await page.waitForTimeout(3000);
 
     // Extraire les données des livres
     const books = await page.evaluate(() => {
       const bookElements = document.querySelectorAll('.kp-notebook-library-each-book');
       const results = [];
+      
+      console.log('Nombre de livres trouvés:', bookElements.length);
 
-      bookElements.forEach((book) => {
-        const titleEl = book.querySelector('.kp-notebook-searchable');
-        const authorEl = book.querySelector('.kp-notebook-searchable:nth-child(2)');
-        const coverEl = book.querySelector('img');
-        
-        if (titleEl) {
-          results.push({
-            title: titleEl?.textContent?.trim() || 'Unknown',
-            author: authorEl?.textContent?.trim() || 'Unknown',
-            cover: coverEl?.src || '',
-            id: book.getAttribute('id') || Math.random().toString(36),
-            scrapedAt: new Date().toISOString()
-          });
+      bookElements.forEach((book, index) => {
+        try {
+          const titleEl = book.querySelector('.kp-notebook-searchable');
+          const authorEl = book.querySelectorAll('.kp-notebook-searchable')[1];
+          const coverEl = book.querySelector('img');
+          
+          if (titleEl) {
+            results.push({
+              title: titleEl?.textContent?.trim() || 'Unknown',
+              author: authorEl?.textContent?.trim() || 'Unknown',
+              cover: coverEl?.src || '',
+              id: book.getAttribute('id') || `book-${index}`,
+              scrapedAt: new Date().toISOString()
+            });
+          }
+        } catch (err) {
+          console.error(`Erreur pour le livre ${index}:`, err.message);
         }
       });
 
       return results;
     });
+    
+    console.log(`${books.length} livres extraits`);
 
     // 3. Pour chaque livre, récupérer les highlights et progression
     for (let book of books) {
