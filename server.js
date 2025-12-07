@@ -21,35 +21,50 @@ async function scrapeKindleData(email, password) {
     args: ['--no-sandbox', '--disable-setuid-sandbox']
   });
   
+  console.log('Browser lancé, création du contexte...');
+  
   try {
     const context = await browser.newContext({
       userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
     });
     const page = await context.newPage();
+    
+    console.log('Navigation vers Amazon...');
 
     // 1. Connexion à Amazon
     await page.goto('https://www.amazon.com/ap/signin?openid.return_to=https://read.amazon.com/notebook', { waitUntil: 'networkidle' });
+    
+    console.log('Page de connexion chargée');
     
     // Attendre le formulaire de connexion
     await page.waitForSelector('input[type="email"]', { timeout: 10000 });
     await page.fill('input[type="email"]', email);
     await page.click('#continue');
     
+    console.log('Email saisi, attente password...');
+    
     await page.waitForTimeout(2000);
     await page.waitForSelector('input[type="password"]', { timeout: 10000 });
     await page.fill('input[type="password"]', password);
     await page.click('#signInSubmit');
 
+    console.log('Connexion soumise, attente redirection...');
+
     // Attendre la redirection vers notebook
     await page.waitForURL('**/notebook**', { timeout: 30000 });
     await page.waitForLoadState('networkidle');
     
+    console.log('Sur la page notebook, recherche des livres...');
+    console.log('URL actuelle:', page.url());
+    
     // Attendre que les livres soient chargés
     try {
       await page.waitForSelector('.kp-notebook-library-each-book', { timeout: 15000 });
+      console.log('Sélecteur trouvé !');
     } catch (e) {
-      // Si pas de livres avec ce sélecteur, prendre une capture pour debug
-      console.log('Aucun livre trouvé avec le sélecteur standard');
+      console.log('Sélecteur non trouvé, extraction du HTML...');
+      const html = await page.content();
+      console.log('Début du HTML:', html.substring(0, 1000));
     }
     
     await page.waitForTimeout(3000);
