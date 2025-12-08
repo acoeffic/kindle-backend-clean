@@ -11,8 +11,10 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
+// Stockage temporaire (remplacer par une vraie DB en production)
 let booksData = [];
 
+// Fonction de scraping Kindle
 async function scrapeKindleData(email, password) {
   const browser = await chromium.launch({
     headless: true,
@@ -46,6 +48,7 @@ async function scrapeKindleData(email, password) {
     
     const page = await context.newPage();
     
+    // Masquer l'automatisation
     await page.addInitScript(() => {
       Object.defineProperty(navigator, 'webdriver', {
         get: () => false,
@@ -66,11 +69,13 @@ async function scrapeKindleData(email, password) {
     
     console.log('Navigation vers Amazon...');
 
+    // 1. Aller d'abord sur amazon.com pour établir des cookies
     await page.goto('https://www.amazon.com', { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(2000);
     
     console.log('Page Amazon chargée, navigation vers login...');
 
+    // 2. Aller sur la page de connexion
     await page.goto('https://www.amazon.com/ap/signin?openid.pape.max_auth_age=0&openid.return_to=https%3A%2F%2Fread.amazon.com%2Fnotebook&openid.identity=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0%2Fidentifier_select&openid.assoc_handle=amzn_readk_us&openid.mode=checkid_setup&openid.claimed_id=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0%2Fidentifier_select&openid.ns=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0', 
       { waitUntil: 'domcontentloaded' });
     
@@ -79,21 +84,21 @@ async function scrapeKindleData(email, password) {
     console.log('Page de connexion chargée');
     console.log('URL actuelle:', page.url());
     
+    // Prendre une capture du HTML pour debug
     const html = await page.content();
     console.log('Contient "email"?', html.includes('email'));
     console.log('Contient "ap_email"?', html.includes('ap_email'));
     
-    const inputs = await page.evaluate(() => {
-      const allInputs = document.querySelectorAll('input');
-      return Array.from(allInputs).map(el => ({
-        type: el.type,
-        id: el.id,
-        name: el.name,
-        placeholder: el.placeholder
-      }));
-    });
+    // Afficher tous les inputs
+    const inputs = await page.$eval('input', els => els.map(el => ({
+      type: el.type,
+      id: el.id,
+      name: el.name,
+      placeholder: el.placeholder
+    })));
     console.log('Tous les inputs:', JSON.stringify(inputs));
     
+    // Essayer différents sélecteurs pour le champ email
     let emailInput;
     const selectors = [
       'input[type="email"]',
@@ -121,9 +126,11 @@ async function scrapeKindleData(email, password) {
     
     console.log('Champ email trouvé, saisie...');
     
+    // Taper lentement comme un humain
     await emailInput.type(email, { delay: 100 });
     await page.waitForTimeout(1000);
     
+    // Chercher le bouton continue
     let continueButton;
     try {
       continueButton = await page.$('#continue');
@@ -140,6 +147,7 @@ async function scrapeKindleData(email, password) {
     
     await page.waitForTimeout(3000);
     
+    // Chercher le champ password
     let passwordInput;
     try {
       passwordInput = await page.waitForSelector('input[type="password"]', { timeout: 10000 });
@@ -152,6 +160,7 @@ async function scrapeKindleData(email, password) {
     await passwordInput.type(password, { delay: 100 });
     await page.waitForTimeout(1000);
     
+    // Chercher le bouton sign in
     let signInButton;
     try {
       signInButton = await page.$('#signInSubmit');
@@ -164,20 +173,18 @@ async function scrapeKindleData(email, password) {
       console.log('Connexion soumise, attente redirection...');
     }
 
+    // Attendre la navigation
     await page.waitForTimeout(5000);
     console.log('URL après connexion:', page.url());
 
-    try {
-      await page.waitForURL('**/notebook**', { timeout: 30000 });
-      await page.waitForLoadState('networkidle');
-    } catch (e) {
-      console.log('Pas de redirection vers notebook, navigation manuelle...');
-      await page.goto('https://read.amazon.com/notebook', { waitUntil: 'networkidle' });
-    }
+    // Attendre la redirection vers notebook
+    await page.waitForURL('**/notebook**', { timeout: 30000 });
+    await page.waitForLoadState('networkidle');
     
     console.log('Sur la page notebook, recherche des livres...');
     console.log('URL actuelle:', page.url());
     
+    // Attendre que les livres soient chargés
     try {
       await page.waitForSelector('.kp-notebook-library-each-book', { timeout: 15000 });
       console.log('Sélecteur trouvé !');
@@ -189,6 +196,7 @@ async function scrapeKindleData(email, password) {
     
     await page.waitForTimeout(3000);
 
+    // Extraire les données des livres
     const books = await page.evaluate(() => {
       const bookElements = document.querySelectorAll('.kp-notebook-library-each-book');
       const results = [];
@@ -220,12 +228,15 @@ async function scrapeKindleData(email, password) {
     
     console.log(`${books.length} livres extraits`);
 
+    // 3. Pour chaque livre, récupérer les highlights et progression
     for (let book of books) {
       try {
+        // Cliquer sur le livre pour voir les détails
         const bookSelector = `#${book.id}`;
         await page.click(bookSelector);
         await page.waitForTimeout(2000);
 
+        // Extraire highlights et notes
         const highlights = await page.evaluate(() => {
           const highlightEls = document.querySelectorAll('.kp-notebook-highlight');
           return Array.from(highlightEls).map(el => ({
@@ -238,6 +249,7 @@ async function scrapeKindleData(email, password) {
         book.highlights = highlights;
         book.highlightCount = highlights.length;
         
+        // Retour à la liste
         await page.goBack();
         await page.waitForTimeout(1000);
       } catch (err) {
@@ -257,10 +269,14 @@ async function scrapeKindleData(email, password) {
   }
 }
 
+// Routes API
+
+// Health check
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// Synchroniser les données Kindle
 app.post('/api/sync', async (req, res) => {
   const { email, password } = req.body;
 
@@ -288,6 +304,7 @@ app.post('/api/sync', async (req, res) => {
   }
 });
 
+// Récupérer tous les livres
 app.get('/api/books', (req, res) => {
   res.json({
     books: booksData,
@@ -296,6 +313,7 @@ app.get('/api/books', (req, res) => {
   });
 });
 
+// Récupérer un livre spécifique
 app.get('/api/books/:id', (req, res) => {
   const book = booksData.find(b => b.id === req.params.id);
   
@@ -306,6 +324,7 @@ app.get('/api/books/:id', (req, res) => {
   res.json(book);
 });
 
+// Statistiques de lecture
 app.get('/api/stats', (req, res) => {
   const totalBooks = booksData.length;
   const totalHighlights = booksData.reduce((acc, book) => acc + (book.highlightCount || 0), 0);
@@ -318,6 +337,35 @@ app.get('/api/stats', (req, res) => {
       (b.highlightCount || 0) - (a.highlightCount || 0)
     )[0] || null
   });
+});
+
+// Nouvelle route pour l'extension Chrome
+app.post('/api/sync-extension', async (req, res) => {
+  try {
+    const { books, totalHighlights, scrapedAt } = req.body;
+    
+    if (!books || !Array.isArray(books)) {
+      return res.status(400).json({ error: 'Format de données invalide' });
+    }
+    
+    // Stocker les livres
+    booksData = books;
+    
+    console.log(`✅ Extension sync: ${books.length} livres reçus`);
+    
+    res.json({
+      success: true,
+      message: `${books.length} livres synchronisés`,
+      totalHighlights,
+      syncedAt: scrapedAt
+    });
+  } catch (error) {
+    console.error('Erreur sync extension:', error);
+    res.status(500).json({ 
+      error: 'Erreur lors de la synchronisation',
+      details: error.message 
+    });
+  }
 });
 
 app.listen(PORT, () => {
