@@ -89,13 +89,39 @@ async function scrapeKindleData(email, password) {
     console.log('Contient "email"?', html.includes('email'));
     console.log('Contient "ap_email"?', html.includes('ap_email'));
     
+    // Afficher tous les inputs
+    const inputs = await page.$eval('input', els => els.map(el => ({
+      type: el.type,
+      id: el.id,
+      name: el.name,
+      placeholder: el.placeholder
+    })));
+    console.log('Tous les inputs:', JSON.stringify(inputs));
+    
     // Essayer différents sélecteurs pour le champ email
     let emailInput;
-    try {
-      emailInput = await page.waitForSelector('input[type="email"]', { timeout: 5000 });
-    } catch (e) {
-      console.log('Sélecteur input[type="email"] non trouvé, essai #ap_email...');
-      emailInput = await page.waitForSelector('#ap_email', { timeout: 5000 });
+    const selectors = [
+      'input[type="email"]',
+      '#ap_email',
+      'input[name="email"]',
+      'input[autocomplete="username"]',
+      'input[autocomplete="email"]',
+      '#email'
+    ];
+    
+    for (const selector of selectors) {
+      try {
+        console.log(`Essai du sélecteur: ${selector}`);
+        emailInput = await page.waitForSelector(selector, { timeout: 2000 });
+        console.log(`✅ Sélecteur trouvé: ${selector}`);
+        break;
+      } catch (e) {
+        console.log(`❌ Sélecteur non trouvé: ${selector}`);
+      }
+    }
+    
+    if (!emailInput) {
+      throw new Error('Impossible de trouver le champ email. Inputs disponibles: ' + JSON.stringify(inputs));
     }
     
     console.log('Champ email trouvé, saisie...');
