@@ -18,37 +18,138 @@ let booksData = [];
 async function scrapeKindleData(email, password) {
   const browser = await chromium.launch({
     headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox']
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-blink-features=AutomationControlled',
+      '--disable-dev-shm-usage',
+      '--disable-web-security'
+    ]
   });
   
   console.log('Browser lancé, création du contexte...');
   
   try {
     const context = await browser.newContext({
-      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      viewport: { width: 1920, height: 1080 },
+      locale: 'en-US',
+      timezoneId: 'America/New_York',
+      permissions: ['geolocation'],
+      extraHTTPHeaders: {
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'DNT': '1',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1'
+      }
     });
+    
     const page = await context.newPage();
+    
+    // Masquer l'automatisation
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, 'webdriver', {
+        get: () => false,
+      });
+      
+      window.navigator.chrome = {
+        runtime: {},
+      };
+      
+      Object.defineProperty(navigator, 'plugins', {
+        get: () => [1, 2, 3, 4, 5],
+      });
+      
+      Object.defineProperty(navigator, 'languages', {
+        get: () => ['en-US', 'en'],
+      });
+    });
     
     console.log('Navigation vers Amazon...');
 
-    // 1. Connexion à Amazon
-    await page.goto('https://www.amazon.com/ap/signin?openid.return_to=https://read.amazon.com/notebook', { waitUntil: 'networkidle' });
+    // 1. Aller d'abord sur amazon.com pour établir des cookies
+    await page.goto('https://www.amazon.com', { waitUntil: 'domcontentloaded' });
+    await page.waitForTimeout(2000);
+    
+    console.log('Page Amazon chargée, navigation vers login...');
+
+    // 2. Aller sur la page de connexion
+    await page.goto('https://www.amazon.com/ap/signin?openid.pape.max_auth_age=0&openid.return_to=https%3A%2F%2Fread.amazon.com%2Fnotebook&openid.identity=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0%2Fidentifier_select&openid.assoc_handle=amzn_readk_us&openid.mode=checkid_setup&openid.claimed_id=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0%2Fidentifier_select&openid.ns=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0', 
+      { waitUntil: 'domcontentloaded' });
+    
+    await page.waitForTimeout(3000);
     
     console.log('Page de connexion chargée');
+    console.log('URL actuelle:', page.url());
     
-    // Attendre le formulaire de connexion
-    await page.waitForSelector('input[type="email"]', { timeout: 10000 });
-    await page.fill('input[type="email"]', email);
-    await page.click('#continue');
+    // Prendre une capture du HTML pour debug
+    const html = await page.content();
+    console.log('Contient "email"?', html.includes('email'));
+    console.log('Contient "ap_email"?', html.includes('ap_email'));
+    
+    // Essayer différents sélecteurs pour le champ email
+    let emailInput;
+    try {
+      emailInput = await page.waitForSelector('input[type="email"]', { timeout: 5000 });
+    } catch (e) {
+      console.log('Sélecteur input[type="email"] non trouvé, essai #ap_email...');
+      emailInput = await page.waitForSelector('#ap_email', { timeout: 5000 });
+    }
+    
+    console.log('Champ email trouvé, saisie...');
+    
+    // Taper lentement comme un humain
+    await emailInput.type(email, { delay: 100 });
+    await page.waitForTimeout(1000);
+    
+    // Chercher le bouton continue
+    let continueButton;
+    try {
+      continueButton = await page.$('#continue');
+    } catch (e) {
+      continueButton = await page.$('input[type="submit"]');
+    }
+    
+    if (continueButton) {
+      await continueButton.click();
+      console.log('Bouton continue cliqué');
+    }
     
     console.log('Email saisi, attente password...');
     
-    await page.waitForTimeout(2000);
-    await page.waitForSelector('input[type="password"]', { timeout: 10000 });
-    await page.fill('input[type="password"]', password);
-    await page.click('#signInSubmit');
+    await page.waitForTimeout(3000);
+    
+    // Chercher le champ password
+    let passwordInput;
+    try {
+      passwordInput = await page.waitForSelector('input[type="password"]', { timeout: 10000 });
+    } catch (e) {
+      console.log('Sélecteur input[type="password"] non trouvé, essai #ap_password...');
+      passwordInput = await page.waitForSelector('#ap_password', { timeout: 10000 });
+    }
+    
+    console.log('Champ password trouvé, saisie...');
+    await passwordInput.type(password, { delay: 100 });
+    await page.waitForTimeout(1000);
+    
+    // Chercher le bouton sign in
+    let signInButton;
+    try {
+      signInButton = await page.$('#signInSubmit');
+    } catch (e) {
+      signInButton = await page.$('input[type="submit"]');
+    }
+    
+    if (signInButton) {
+      await signInButton.click();
+      console.log('Connexion soumise, attente redirection...');
+    }
 
-    console.log('Connexion soumise, attente redirection...');
+    // Attendre la navigation
+    await page.waitForTimeout(5000);
+    console.log('URL après connexion:', page.url());
 
     // Attendre la redirection vers notebook
     await page.waitForURL('**/notebook**', { timeout: 30000 });
